@@ -1,0 +1,40 @@
+[project]
+name = "docs-mcp"
+version = "0.1.0"
+description = "MCP server that ingests framework documentation and serves it over a RAG pipeline"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+dependencies = [
+    "mcp[cli]>=1.9.0",
+    "scrapy>=2.13.0",
+    "scrapy-playwright>=0.0.43",
+    "playwright>=1.49",
+    "trafilatura>=2.0.0",
+    "markdownify>=0.14",
+    "beautifulsoup4>=4.12",
+    "asyncpg>=0.30.0",
+    "pydantic-settings>=2.6.0",
+    "openai>=1.60.0",
+]
+
+[project.optional-dependencies]
+local = ["sentence-transformers>=3.3"]
+dev = ["pytest>=8.3", "pytest-asyncio>=0.25"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/docs_mcp"]
+
+[project.scripts]
+docs-mcp-server = "docs_mcp.server:main"
+docs-mcp-crawl = "docs_mcp.scraper.runner:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+markers = ["integration: requires a running Postgres with pgvector"]

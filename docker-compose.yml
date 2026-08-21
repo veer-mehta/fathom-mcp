@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: docs-mcp-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: docs_mcp
+      POSTGRES_PASSWORD: docs_mcp
+      POSTGRES_DB: docs_mcp
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U docs_mcp -d docs_mcp"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  pgdata:
