@@ -1,143 +1,93 @@
-# docs-mcp
+# docs-rag
 
-An MCP (Model Context Protocol) server that crawls framework/library documentation sites, converts pages to markdown, chunks and embeds them into Postgres (pgvector), and exposes semantic search over the indexed docs to any MCP client.
+`docs-rag` turns any framework documentation site into a semantic-searchable
+corpus. Crawl a docs site → extract markdown → chunk, embed (local or OpenAI)
+and store in Postgres+pgvector → search by *meaning*, not just keywords.
+Optionally serve it as an MCP server so AI clients can call it as a tool.
+
+## Quick start
+
+```bash
+git clone ... docs-rag && cd docs-rag
+python -m venv .venv && source .venv/bin/activate
+pip install -e ".[local]"        # add "[openai]" for cloud embeddings, "[dev]" for tests
+docker compose up -d             # postgres + pgvector
+cp .env.example .env && $EDITOR .env
+```
+
+Index a site and ask it a question:
+
+```bash
+.venv/bin/python scripts/demo.py        # ingests pydantic docs and runs sample queries
+# …or:
+.venv/bin/python -m docs_mcp.scraper.runner --url https://docs.pydantic.dev/latest/ --depth 1 --max-pages 6 > pages.jsonl
+```
+
+Search it (via CLI/API/MCP/web):
+
+```bash
+curl 'http://localhost:8000/search?q=how+do+I+install+pydantic&mode=hybrid'
+curl http://localhost:8000/sources
+```
 
 ## Architecture
 
-```
-MCP client ──stdio──▶ FastMCP server
-                        │ add_documentation() ──▶ scrapy+playwright subprocess (JSONL)
-                        │                            └─▶ trafilatura → markdown → chunker → embeddings → Postgres/pgvector
-                        │ search_documentation() ──▶ embed query ──▶ cosine top-k ──▶ cited markdown chunks
-                        └ list_sources()
-```
-
-## Setup
-
-```bash
-docker compose up -d                 # Postgres 16 + pgvector on localhost:5432
-python3 -m venv .venv
-.venv/bin/pip install -e ".[dev]"
-cp .env.example .env                 # set OPENAI_API_KEY (or EMBEDDING_PROVIDER=hash for testing)
-.venv/bin/playwright install chromium
+```mermaid
+flowchart LR
+    A[User / AI Client] --> B[API Server]
+    B --> C[(Postgres + pgvector)]
+    B --> D[Web UI]
+    B --> E[MCP Bridge]
+    E --> F[MCP Server Subprocess]
+    F --> C
+    B --> G[Ingestion Pipeline]
+    G --> H[Scraper Subprocess]
+    G --> C
 ```
 
-## Run
+## Run modes
 
-Three ways to use it — same pipeline, different front doors.
+| mode | starts | use |
+|---|---|---|
+| `.venv/bin/docs-mcp-server` | MCP server on stdin/stdout | plug into Claude, Cursor, etc. (`background=true` returns a job id immediately) |
+| `.venv/bin/docs-mcp-api` | web UI `http://127.0.0.1:8000` + REST API | browser search / `POST /ingest` (`"background":true` → 202, poll `GET /jobs/{id}`) |
+| `scripts/demo.py` | nothing | drive the library directly from Python |
 
-### 1. MCP server (for AI clients)
+## Tools / endpoints
 
-```bash
-.venv/bin/docs-mcp-server            # stdio transport
-```
+| MCP tool | REST | What it does |
+|---|---|---|
+| `add_documentation(name, version, base_url, max_depth=2, max_pages=30, background=false, prune_missing=false)` | `POST /ingest` | Crawl + index a docs site. `background=true` returns a job id; `prune_missing=true` deletes pages not seen in this crawl (use only with uncapped crawls). |
+| `search_documentation(query, name?, version?, k=5, mode="hybrid")` | `GET /search` | Semantic search. `mode` = `hybrid` (vector + keyword, RRF-fused, default) · `vector` · `keyword`. |
+| `list_sources()` | `GET /sources` | Indexed sources with page/chunk counts |
+| `get_ingest_status(job_id)` | `GET /jobs/{id}` | Progress/live counters of a background job |
+| — | `GET /jobs` | Recent job history |
+| — | `DELETE /sources/{source_id}` | Wipe one indexed source |
 
-Register with Claude Desktop / Cursor / opencode:
+## Incremental re-crawl
 
-```json
-{
-  "mcpServers": {
-    "docs-rag": {
-      "command": "/absolute/path/to/mcp-project/.venv/bin/docs-mcp-server"
-    }
-  }
-}
-```
-
-MCP over HTTP instead of stdio: set `MCP_TRANSPORT=streamable-http` in `.env` and run the same command (endpoint: `http://127.0.0.1:8000/mcp`).
-
-### 2. Web UI
-
-```bash
-.venv/bin/docs-mcp-api               # then open http://127.0.0.1:8000
-```
-
-Browser UI for searching indexed docs, managing sources, and ingesting new ones.
-The **backend toggle** at the top switches every panel between:
-
-- `RAG — direct pipeline access`: REST endpoints calling the library directly
-- `MCP — tool calls through docs-mcp server`: the same operations executed as real
-  MCP tool calls (`search_documentation`, `add_documentation`, …) against a
-  `docs-mcp-server` subprocess managed by the API server
-
-### 3. REST API (same server as the web UI)
-
-```bash
-# blocking (returns final counts)
-curl -X POST localhost:8000/ingest -H 'Content-Type: application/json' \
-     -d '{"name":"pydantic","version":"2.13","base_url":"https://docs.pydantic.dev/latest/","max_depth":1,"max_pages":6}'
-
-# background (202 immediately, poll for progress — use this for large sites)
-curl -X POST localhost:8000/ingest -H 'Content-Type: application/json' \
-     -d '{"name":"pydantic","version":"2.13","base_url":"https://docs.pydantic.dev/latest/","background":true}'
-curl localhost:8000/jobs/<job_id>   # live counters; status done|failed carries result
-curl localhost:8000/jobs            # recent jobs
-
-curl 'localhost:8000/search?q=how+do+I+install&k=3&mode=hybrid'
-curl localhost:8000/sources
-curl -X DELETE localhost:8000/sources/pydantic@2.13
-```
-
-### 4. Plain Python library
-
-```python
-import asyncio
-from docs_mcp.pipeline import ingest_documentation
-from docs_mcp.embeddings import get_embedding_provider
-from docs_mcp.storage.db import Database
-
-async def main():
-    db, provider = Database(DSN), get_embedding_provider()
-    await db.ensure_schema(provider.dimensions)
-    await ingest_documentation(db, "pydantic", "2.13", "https://docs.pydantic.dev/latest/")
-    vec = (await provider.embed(["how do I install"]))[0]
-    for hit in await db.search(vec, k=3):
-        print(hit.similarity, hit.url)
-
-asyncio.run(main())
-```
-
-Runnable version: `.venv/bin/python scripts/demo.py`
-
-### Tools / endpoints reference
-
-| MCP tool | REST | Description |
-| --- | --- | --- |
-| `add_documentation(name, version, base_url, max_depth=2, max_pages=30, background=false, prune_missing=false)` | `POST /ingest` (`"background": true` → 202) | Crawl a docs site (same-domain, depth/page limited), index as `{name}@{version}`. `background=true` returns a job id immediately. Re-ingesting is **incremental**: unchanged pages (sha256 of extracted markdown) skip chunking/embedding. `prune_missing=true` also deletes indexed pages the crawl didn't visit — only use with caps that cover the whole site |
-| `get_ingest_status(job_id)` | `GET /jobs/{job_id}` | Progress of a background ingest (live page/chunk counters); `done` includes the final result |
-| — | `GET /jobs` | Recent background jobs (newest first) |
-| `search_documentation(query, name?, version?, k=5, mode="hybrid")` | `GET /search` | Semantic search; returns markdown chunks with source URL + heading path. `mode` = `hybrid` (default; vector + keyword fused via Reciprocal Rank Fusion), `vector`, or `keyword`. REST adds it as the `mode` query param |
-| *any tool* | `GET/POST /mcp/search` · `/mcp/sources` · `/mcp/ingest` · `/mcp/jobs/{id}` | Same operations routed through a real MCP session: the API server spawns `docs-mcp-server` over stdio and proxies requests as tool calls (`McpBridge`). The web UI's backend toggle switches between direct RAG and this MCP path |
-| `list_sources()` | `GET /sources` | List indexed sources with page/chunk counts |
-| — | `DELETE /sources/{source_id}` | Remove an indexed source |
+Re-ingesting an existing `{name}@{version}` source only re-chunks/re-embeds
+pages whose extracted markdown changed (sha256); skipped pages are reported as
+`pages_unchanged`. Existing rows get backfilled on first re-run.
 
 ## Embedding providers
 
-Set `EMBEDDING_PROVIDER` in `.env`:
-
-- `openai` — `text-embedding-3-small` (needs `OPENAI_API_KEY`)
-- `local` — sentence-transformers models, offline (install with `pip install -e ".[local]"`). Recommended: `BAAI/bge-m3` (1024-dim, multilingual, runs well on an RTX GPU); lighter CPU option: `BAAI/bge-base-en-v1.5`. Knobs: `LOCAL_EMBEDDING_MAX_TOKENS` (default 1024 — caps activation memory), `LOCAL_EMBEDDING_DEVICE` = `auto` (default; picks CUDA only if ≥4 GiB free, else CPU) | `cuda` | `cpu`. Batches that OOM the GPU at encode time automatically retry on CPU
-- `hash` — deterministic fake vectors, dev/testing only, no semantic quality
-
-Note: pgvector columns are fixed-width, so switching between providers with different dimensions requires `DROP TABLE documents;` and re-ingesting.
-
-## Standalone crawler
-
-```bash
-.venv/bin/python -m docs_mcp.scraper.runner --url https://docs.example.com --depth 1 --max-pages 5 > pages.jsonl
-```
+Set `EMBEDDING_PROVIDER` in `.env`: `openai` (needs key), `local` (offline
+sentence-transformer). Config knobs: `LOCAL_EMBEDDING_MODEL`,
+`LOCAL_EMBEDDING_MAX_TOKENS` (default 1024), `LOCAL_EMBEDDING_DEVICE`
+(`auto`/`cuda`/`cpu`). Switching providers with a different vector dimension
+requires dropping and re-creating the `documents` table.
 
 ## Tests
 
 ```bash
-.venv/bin/pytest                     # unit tests
-.venv/bin/pytest -m integration      # requires docker compose up
+.venv/bin/pytest                 # unit tests (no external services)
 ```
 
-## Limitations (MVP)
+## Notes / caveats
 
-- Query strings are stripped during crawling (some paginated docs may collapse)
-- Background jobs live in process memory: job history is lost on restart, and a background job submitted through one server (e.g. stdio MCP) can't be polled from another (e.g. REST) — except when submitted via the web UI's MCP backend, whose bridge session stays connected to that same server process
-- Source deletion is only available on the RAG backend (no MCP tool for it yet)
-- Single embedding dimension per database (switching providers requires re-ingestion)
-- Incremental re-crawl hashes are per-page over the extracted markdown; rows predating the feature are backfilled on first re-ingest (one full re-embed), and `prune_missing` with capped crawls will delete unvisited pages by design
+- Background jobs are **in-memory** — lost on restart.
+- The web UI can search via the RAG path or through the MCP path (its own
+  subprocess) via the backend toggle — handy for comparing the two.
+- The scraper strips query strings and follows only same-host links; crawls
+  obey robots.txt.
