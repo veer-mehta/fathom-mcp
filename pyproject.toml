@@ -32,6 +32,7 @@ packages = ["src/docs_mcp"]
 [project.scripts]
 docs-mcp-server = "docs_mcp.server:main"
 docs-mcp-crawl = "docs_mcp.scraper.runner:main"
+docs-mcp-api = "docs_mcp.api:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
