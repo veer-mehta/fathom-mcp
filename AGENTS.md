@@ -1,10 +1,14 @@
-## Repository Map
+# docs-rag
 
-A full codemap is available at `codemap.md` in the project root.
+Documentation RAG system: crawl a docs site → chunk + embed locally (HuggingFace)
+→ store in Postgres+pgvector → semantic search via MCP server, REST API, and web UI.
 
-Before working on any task, read `codemap.md` to understand:
-- Project architecture and entry points
-- Directory responsibilities and design patterns
-- Data flow and integration points between modules
+## Commands
 
-For deep work on a specific folder, also read that folder's `codemap.md`.
+- Tests: `.venv/bin/pytest` (unit tests, no external services needed)
+- API + web UI: `docs-mcp-api` → http://127.0.0.1:8000
+- MCP server: `docs-mcp-server` (stdio)
+- Crawler CLI: `docs-mcp-crawl --url <url>`
+
+Configuration lives in `.env` (see `.env.example`). Architecture is described in
+`README.md`.
