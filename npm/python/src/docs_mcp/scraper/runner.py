@@ -9,10 +9,11 @@ from docs_mcp.config import settings
 from docs_mcp.scraper.spider import DocsSpider
 
 
-def _write_jsonl(item, spider):
-    sys.stdout.write(json.dumps(item, ensure_ascii=False) + "\n")
-    sys.stdout.flush()
-    return item
+class JsonlStdoutPipeline:
+    def process_item(self, item, spider):
+        sys.stdout.write(json.dumps(item, ensure_ascii=False) + "\n")
+        sys.stdout.flush()
+        return item
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -24,6 +25,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--user-agent", default=settings.user_agent)
     parser.add_argument("--cache-dir", default=settings.crawl_cache_dir)
     parser.add_argument("--no-cache", action="store_true")
+    parser.add_argument("--lang", default="", help="Only follow pages for this language (e.g. en)")
+    parser.add_argument("--sitemap", action="store_true", help="Discover pages from sitemap.xml instead of link-following")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.WARNING, stream=sys.stderr)
@@ -32,7 +35,7 @@ def main(argv: list[str] | None = None) -> int:
 
     process = CrawlerProcess(
         settings={
-            "ITEM_PIPELINES": {"docs_mcp.scraper.runner._write_jsonl": 100},
+            "ITEM_PIPELINES": {"docs_mcp.scraper.runner.JsonlStdoutPipeline": 100},
             "LOG_LEVEL": "WARNING",
             "DOWNLOAD_DELAY": args.delay,
             "USER_AGENT": args.user_agent,
@@ -45,6 +48,8 @@ def main(argv: list[str] | None = None) -> int:
         max_depth=args.depth,
         max_pages=args.max_pages,
         cache_dir=cache_dir,
+        lang=args.lang,
+        sitemap=args.sitemap,
     )
     process.start()
     return 0
