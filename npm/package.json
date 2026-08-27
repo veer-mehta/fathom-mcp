@@ -1,11 +1,27 @@
 {
-  "name": "docs-mcp-server",
+  "name": "@opendocs-mcp/server",
   "version": "0.1.0",
   "description": "MCP server for documentation RAG — crawl, chunk, embed, search local docs",
   "bin": {
     "docs-mcp-server": "./bin/docs-mcp-server.js"
   },
-  "files": ["bin"],
-  "keywords": ["mcp", "rag", "documentation", "search"],
-  "license": "MIT"
+  "files": [
+    "bin",
+    "python"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "rag",
+    "documentation",
+    "search",
+    "embeddings",
+    "vector-search"
+  ],
+  "author": "",
+  "license": "MIT",
+  "repository": ""
 }

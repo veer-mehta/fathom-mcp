@@ -1,0 +1,11 @@
+# npm publishes only what's listed in "files" in package.json,
+# but this guards against accidental inclusion.
+python/tests/
+python/.venv/
+python/.env
+python/.env.example
+python/.crawl-cache/
+python/.git/
+**/__pycache__/
+**/*.pyc
+**/*.egg-info/
