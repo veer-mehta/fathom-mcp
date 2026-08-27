@@ -6,6 +6,7 @@ const path = require("path");
 const fs = require("fs");
 const os = require("os");
 const http = require("http");
+const net = require("net");
 
 const HOME = os.homedir();
 const STATE_DIR = path.join(HOME, ".fathom-mcp");
@@ -13,6 +14,30 @@ const VENV_DIR = path.join(STATE_DIR, "venv");
 const SRC_DIR = path.join(STATE_DIR, "src");
 const MARKER = path.join(VENV_DIR, ".setup-done");
 const API_PORT = 8000;
+const PG_PORT = 5432;
+
+const DOCKER_COMPOSE = `services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: fathom-mcp-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: docs_mcp
+      POSTGRES_PASSWORD: docs_mcp
+      POSTGRES_DB: docs_mcp
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U docs_mcp -d docs_mcp"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  pgdata:
+`;
 
 function log(msg) { process.stderr.write(`fathom: ${msg}\n`); }
 
@@ -91,13 +116,60 @@ function ensureConfig() {
 
 function isPortInUse(port) {
   return new Promise((resolve) => {
-    const req = http.get(`http://127.0.0.1:${port}/sources`, { timeout: 2000 }, (res) => {
-      res.resume();
-      resolve(true);
-    });
-    req.on("error", () => resolve(false));
-    req.on("timeout", () => { req.destroy(); resolve(false); });
+    const socket = new net.Socket();
+    socket.setTimeout(2000);
+    socket.on("connect", () => { socket.destroy(); resolve(true); });
+    socket.on("timeout", () => { socket.destroy(); resolve(false); });
+    socket.on("error", () => resolve(false));
+    socket.connect(port, "127.0.0.1");
   });
+}
+
+function ensureDockerCompose() {
+  const composePath = path.join(STATE_DIR, "docker-compose.yml");
+  if (!fs.existsSync(composePath)) {
+    fs.mkdirSync(STATE_DIR, { recursive: true });
+    fs.writeFileSync(composePath, DOCKER_COMPOSE);
+  }
+  return composePath;
+}
+
+function hasDocker() {
+  try {
+    execSync("docker --version", { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function ensurePostgres() {
+  if (await isPortInUse(PG_PORT)) {
+    log("postgres already running");
+    return;
+  }
+  if (!hasDocker()) {
+    log("postgres not running and docker not found");
+    log("start postgres manually or install docker: https://docs.docker.com/get-docker/");
+    return;
+  }
+  const composePath = ensureDockerCompose();
+  log("starting postgres via docker...");
+  try {
+    execSync(`docker compose -f "${composePath}" up -d`, { stdio: "ignore" });
+  } catch {
+    log("docker compose failed — is docker running?");
+    return;
+  }
+  const start = Date.now();
+  while (Date.now() - start < 30000) {
+    if (await isPortInUse(PG_PORT)) {
+      log("postgres ready");
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  log("postgres failed to start within 30s");
 }
 
 function startApiServer(python) {
@@ -139,12 +211,15 @@ async function maybeStartApi(python) {
   }
 }
 
-function run() {
+async function run() {
   ensureSetup();
   ensureConfig();
   const python = path.join(VENV_DIR, "bin", "python");
   const useApi = process.argv.includes("--api");
-  if (!useApi) maybeStartApi(python);
+  if (!useApi) {
+    await ensurePostgres();
+    await maybeStartApi(python);
+  }
   const mod = useApi ? "docs_mcp.api" : "docs_mcp.server";
   const child = spawn(python, ["-m", mod], {
     cwd: SRC_DIR,
