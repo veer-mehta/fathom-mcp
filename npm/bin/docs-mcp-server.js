@@ -7,12 +7,12 @@ const fs = require("fs");
 const os = require("os");
 
 const HOME = os.homedir();
-const STATE_DIR = path.join(HOME, ".docs-mcp");
+const STATE_DIR = path.join(HOME, ".fathom-mcp");
 const VENV_DIR = path.join(STATE_DIR, "venv");
 const SRC_DIR = path.join(STATE_DIR, "src");
 const MARKER = path.join(VENV_DIR, ".setup-done");
 
-function log(msg) { process.stderr.write(`docs-mcp-server: ${msg}\n`); }
+function log(msg) { process.stderr.write(`fathom: ${msg}\n`); }
 
 function findPython() {
   const candidates = ["python3.14", "python3.13", "python3.12", "python3"];
@@ -71,8 +71,8 @@ function ensureConfig() {
   if (!fs.existsSync(envFile)) {
     fs.mkdirSync(STATE_DIR, { recursive: true });
     fs.writeFileSync(envFile, [
-      "# docs-mcp-server configuration",
-      "# https://github.com/yourname/docs-mcp#configuration",
+      "# fathom-mcp configuration",
+      "# https://github.com/yourname/fathom-mcp#configuration",
       "",
       "LLM_API_KEY=your-key-here",
       "LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai",

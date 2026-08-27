@@ -1,5 +1,5 @@
 {
-  "name": "@opendocs-mcp/server",
+  "name": "@fathom-mcp/server",
   "version": "0.1.0",
   "description": "MCP server for documentation RAG — crawl, chunk, embed, search local docs",
   "bin": {

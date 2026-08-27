@@ -1,4 +1,4 @@
-# docs-rag
+# fathom-mcp
 
 Documentation RAG system: crawl a docs site → chunk + embed locally (HuggingFace)
 → store in Postgres+pgvector → semantic search via MCP server, REST API, and web UI.
