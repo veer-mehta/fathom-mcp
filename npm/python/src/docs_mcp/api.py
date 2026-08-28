@@ -17,7 +17,6 @@ from docs_mcp.jobs import JOBS, submit_ingest
 from docs_mcp.pipeline import ingest_documentation, ingest_files, ingest_folder
 from docs_mcp.storage.db import Database, source_pattern
 from docs_mcp.llm import generate_llm_response
-from docs_mcp.chat import handle_chat, start_ingest
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +102,7 @@ async def search(request):
     provider = get_embedding_provider()
     vectors = await provider.embed([query])
     k = int(request.query_params.get("k", 5))
+    min_sim = float(request.query_params.get("min_sim", 0.35))
     try:
         hits = await db.search(
             vectors[0],
@@ -112,6 +112,7 @@ async def search(request):
             ),
             k=max(1, min(k, 20)),
             mode=mode,
+            min_similarity=min_sim,
         )
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
@@ -165,11 +166,6 @@ async def llm_chat(request):
     if not query:
         return JSONResponse({"error": "Missing 'q' parameter"}, status_code=400)
     try:
-        action = handle_chat(query)
-
-        if action["mode"] == "ingest_ask_url":
-            return JSONResponse(action)
-
         provider = get_embedding_provider()
         vectors = await provider.embed([query])
         hits = await db.search(vectors[0], query_text=query, k=5, mode="hybrid")
@@ -206,21 +202,6 @@ async def llm_chat(request):
     except Exception as exc:
         logger.exception("Error in llm_chat endpoint")
         return JSONResponse({"error": f"Processing failed: {exc}"}, status_code=500)
-
-
-
-async def chat_ingest(request):
-    try:
-        payload = await request.json()
-        name, version, url = payload["name"], payload["version"], payload["url"]
-    except ValueError:
-        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
-    except KeyError as exc:
-        return JSONResponse(
-            {"error": f"missing required field: {exc}"}, status_code=400
-        )
-    result = start_ingest(db, name=name, version=version, url=url)
-    return JSONResponse(result)
 
 
 async def upload(request):
@@ -271,7 +252,6 @@ routes = [
     Route("/jobs", list_jobs, methods=["GET"]),
     Route("/jobs/{job_id}", get_job, methods=["GET"]),
     Route("/llm-chat", llm_chat, methods=["GET"]),
-    Route("/chat/ingest", chat_ingest, methods=["POST"]),
 ]
 
 app = Starlette(routes=routes, lifespan=lifespan)
